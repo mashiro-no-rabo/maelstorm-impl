@@ -1,99 +1,69 @@
 use anyhow::Result;
 use std::{
-  collections::HashMap,
-  io,
-  sync::{
-    atomic::{AtomicU64, Ordering},
-    mpsc::{self, Receiver, Sender},
-  },
-  thread,
+  io::{self, Write},
+  sync::atomic::{AtomicU64, Ordering},
 };
 
 use maelstrom::*;
 
 fn main() -> Result<()> {
+  // logging
+  let stderr = io::stderr();
+  let mut log = stderr.lock();
+
   // input
   let stdin = io::stdin();
 
-  // nodes -> tx channels
-  let mut node_chans: HashMap<String, Sender<Message>> = HashMap::new();
+  // node data
+  let msg_id = AtomicU64::new(0);
+  let mut node_id = String::new();
+  let mut neighbors: Vec<String> = vec![];
 
   // master loop
   loop {
     let mut input = String::new();
     if let Ok(_) = stdin.read_line(&mut input) {
       let msg: Message = serde_json::from_str(&input)?;
-      log(format!("Master loop got: {}", input))?;
+      log.write_all(format!("Got: {:?}\n", &msg).as_bytes())?;
 
-      if msg.body.typ == "init" {
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || node(rx).unwrap());
-        node_chans.insert(msg.body.node_id.clone().unwrap(), tx);
-      }
+      match msg.body.typ.as_str() {
+        "init" => {
+          node_id = msg.body.node_id.clone().unwrap();
+          log.write_all(format!("Node {} initialized\n", &node_id).as_bytes())?;
 
-      if let Some(tx) = node_chans.get(&msg.dest) {
-        tx.send(msg.clone())?;
-      } else {
-        unimplemented!("node not found!")
+          let reply = Message {
+            src: msg.dest,
+            dest: msg.src,
+            body: MsgBody {
+              typ: "init_ok".to_owned(),
+              msg_id: Some(msg_id.fetch_add(1, Ordering::SeqCst)),
+              in_reply_to: Some(msg.body.msg_id.unwrap()),
+              ..Default::default()
+            },
+          };
+
+          println!("{}", serde_json::to_string(&reply)?);
+        }
+        "topology" => {
+          // parse neighbors
+          neighbors = msg.body.topology.unwrap().get(&node_id).unwrap().clone();
+          log.write_all(format!("Neighbors: {:?}\n", &neighbors).as_bytes())?;
+
+          let reply = Message {
+            src: msg.dest,
+            dest: msg.src,
+            body: MsgBody {
+              typ: "topology_ok".to_owned(),
+              msg_id: Some(msg_id.fetch_add(1, Ordering::SeqCst)),
+              in_reply_to: Some(msg.body.msg_id.unwrap()),
+              ..Default::default()
+            },
+          };
+
+          println!("{}", serde_json::to_string(&reply)?);
+        }
+        _ => unimplemented!("unexpected message"),
       }
     }
   }
-}
-
-fn node(rx: Receiver<Message>) -> Result<()> {
-  let msg_id = AtomicU64::new(0);
-
-  let mut node_id = String::new();
-  let mut neighbors: Vec<String> = vec![];
-
-  while let Ok(msg) = rx.recv() {
-    match msg.body.typ.as_str() {
-      "init" => {
-        node_id = msg.body.node_id.clone().unwrap();
-        log(format!("Node {} initialized", &node_id))?;
-
-        let reply = Message {
-          src: msg.dest,
-          dest: msg.src,
-          body: MsgBody {
-            typ: "init_ok".to_owned(),
-            msg_id: Some(msg_id.fetch_add(1, Ordering::SeqCst)),
-            in_reply_to: Some(msg.body.msg_id.unwrap()),
-            ..Default::default()
-          },
-        };
-
-        println!("{}", serde_json::to_string(&reply)?);
-      }
-      "topology" => {
-        // parse neighbors
-        let reply = Message {
-          src: msg.dest,
-          dest: msg.src,
-          body: MsgBody {
-            typ: "topology_ok".to_owned(),
-            msg_id: Some(msg_id.fetch_add(1, Ordering::SeqCst)),
-            in_reply_to: Some(msg.body.msg_id.unwrap()),
-            ..Default::default()
-          },
-        };
-
-        println!("{}", serde_json::to_string(&reply)?);
-      }
-      _ => unimplemented!("unexpected message"),
-    }
-  }
-
-  Ok(())
-}
-
-fn log(l: String) -> Result<()> {
-  use std::io::Write;
-
-  let stderr = io::stderr();
-  let mut log = stderr.lock();
-  log.write_all(l.as_bytes())?;
-  log.flush()?;
-
-  Ok(())
 }
