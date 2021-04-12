@@ -1,8 +1,13 @@
 use anyhow::Result;
 use std::{
-  collections::HashSet,
+  collections::{HashMap, HashSet},
   io::{self, Write},
-  sync::atomic::{AtomicU64, Ordering},
+  sync::{
+    atomic::{AtomicU64, Ordering},
+    mpsc::{self, Sender},
+  },
+  thread,
+  time::Duration,
 };
 
 use maelstrom::*;
@@ -23,6 +28,9 @@ fn main() -> Result<()> {
   let mut node_id = String::new();
   let mut neighbors: Vec<String> = vec![];
   let mut messages: HashSet<u64> = HashSet::new();
+
+  // track retry threads per msg_id (u64)
+  let mut gossiping: HashMap<u64, Sender<()>> = HashMap::new();
 
   loop {
     let mut input = String::new();
@@ -59,28 +67,48 @@ fn main() -> Result<()> {
           let msg_content = msg.body.message.unwrap();
           if messages.insert(msg_content) {
             // new message, gossip
-            for nb in neighbors.iter() {
-              let gossip = Message {
-                src: node_id.clone(),
-                dest: nb.clone(),
-                body: MsgBody {
-                  typ: "broadcast".to_owned(),
-                  message: Some(msg_content),
-                  ..Default::default()
-                },
-              };
-              println!("{}", serde_json::to_string(&gossip)?);
+            for nb in neighbors.iter().filter(|nb| *nb != &msg.src) {
+              let (tx, rx) = mpsc::channel();
+              let msg_id = gen_id();
+              let src = node_id.clone();
+              let dest = nb.clone();
+
+              thread::spawn(move || {
+                loop {
+                  let gossip = Message {
+                    src: src.clone(),
+                    dest: dest.clone(),
+                    body: MsgBody {
+                      typ: "broadcast".to_owned(),
+                      msg_id,
+                      message: Some(msg_content),
+                      ..Default::default()
+                    },
+                  };
+                  println!("{}", serde_json::to_string(&gossip).unwrap());
+
+                  // wait for response
+                  if let Ok(_) = rx.recv_timeout(Duration::from_millis(500)) {
+                    break;
+                  }
+                }
+              });
+
+              gossiping.insert(msg_id.unwrap(), tx);
             }
           }
 
-          // gossip broadcasts don't have msg_id
-          if msg.body.msg_id.is_some() {
-            let r = MsgBody {
-              typ: "broadcast_ok".to_owned(),
-              msg_id: gen_id(),
-              ..Default::default()
-            };
-            reply(&msg, r)?;
+          let r = MsgBody {
+            typ: "broadcast_ok".to_owned(),
+            msg_id: gen_id(),
+            ..Default::default()
+          };
+          reply(&msg, r)?;
+        }
+        "broadcast_ok" => {
+          // cancel gossip thread
+          if let Some(tx) = gossiping.remove(&msg.body.in_reply_to.unwrap()) {
+            tx.send(())?;
           }
         }
         "read" => {
