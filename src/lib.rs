@@ -37,3 +37,6 @@ pub struct MsgBody {
   #[serde(skip_serializing_if = "Option::is_none")]
   pub value: Option<HashSet<u64>>,
 }
+
+mod crdt;
+pub use crdt::*;

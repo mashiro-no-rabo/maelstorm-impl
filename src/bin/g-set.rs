@@ -12,6 +12,35 @@ use std::{
 
 use maelstrom::*;
 
+struct GSet(HashSet<u64>);
+
+impl CRDT for GSet {
+  type Element = u64;
+
+  fn init() -> Self {
+    GSet(HashSet::new())
+  }
+
+  fn from_msg_body(mb: &MsgBody) -> Self {
+    GSet(mb.value.clone().unwrap())
+  }
+
+  fn into_msg_body(&self) -> MsgBody {
+    MsgBody {
+      value: Some(self.0.clone()),
+      ..Default::default()
+    }
+  }
+
+  fn add(&mut self, val: Self::Element) {
+    self.0.insert(val);
+  }
+
+  fn merge(&mut self, other: &Self) {
+    *self = GSet(self.0.union(&other.0).cloned().collect())
+  }
+}
+
 fn main() -> Result<()> {
   // logging
   let stderr = io::stderr();
@@ -25,7 +54,7 @@ fn main() -> Result<()> {
   let gen_id = move || Some(msg_id.fetch_add(1, Ordering::SeqCst));
 
   // node data
-  let set = Arc::new(RwLock::new(HashSet::<u64>::new()));
+  let gset = Arc::new(RwLock::new(GSet::init()));
 
   loop {
     let mut input = String::new();
@@ -49,15 +78,12 @@ fn main() -> Result<()> {
           log.write_all(format!("Node {} initialized\n", &node_id).as_bytes())?;
 
           // replicate thread
-          let set_reader = set.clone();
+          let set_reader = gset.clone();
           thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(2_000));
 
-            let bd = MsgBody {
-              typ: "replicate".to_owned(),
-              value: Some(set_reader.read().unwrap().iter().cloned().collect()),
-              ..Default::default()
-            };
+            let mut bd = set_reader.read().unwrap().into_msg_body();
+            bd.typ = "replicate".to_owned();
 
             for dest in other_nodes.iter().cloned() {
               let msg = Message {
@@ -80,8 +106,8 @@ fn main() -> Result<()> {
         "add" => {
           let elem = msg.body.element.unwrap();
           {
-            let mut set_writer = set.write().unwrap();
-            set_writer.insert(elem);
+            let mut set_writer = gset.write().unwrap();
+            set_writer.add(elem);
           }
 
           let r = MsgBody {
@@ -92,17 +118,17 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "replicate" => {
-          let mut set_writer = set.write().unwrap();
-          *set_writer = set_writer.union(&msg.body.value.unwrap()).cloned().collect();
+          let other = GSet::from_msg_body(&msg.body);
+
+          let mut set_writer = gset.write().unwrap();
+          set_writer.merge(&other);
         }
         "read" => {
-          let r = MsgBody {
-            typ: "read_ok".to_owned(),
-            msg_id: gen_id(),
-            value: Some(set.read().unwrap().iter().cloned().collect()),
-            ..Default::default()
-          };
-          reply(&msg, r)?;
+          let mut mb = gset.read().unwrap().into_msg_body();
+          mb.typ = "read_ok".to_owned();
+          mb.msg_id = gen_id();
+
+          reply(&msg, mb)?;
         }
         _ => unimplemented!("unexpected message"),
       }
