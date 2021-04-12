@@ -5,14 +5,14 @@ use maelstrom::*;
 
 fn main() -> Result<()> {
   let stderr = io::stderr();
-  let mut out = stderr.lock();
+  let mut log = stderr.lock();
   let stdin = io::stdin();
 
   let mut next_msg_id: u64 = 0;
   loop {
     let mut input = String::new();
     if let Ok(_) = stdin.read_line(&mut input) {
-      out.write_all(format!("Received: {}", input).as_bytes())?;
+      log.write_all(format!("Received: {}", input).as_bytes())?;
 
       let msg: Message = serde_json::from_str(&input)?;
       match msg.body.typ.as_str() {
