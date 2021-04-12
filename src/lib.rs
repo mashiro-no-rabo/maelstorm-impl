@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -31,4 +31,9 @@ pub struct MsgBody {
   pub message: Option<u64>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub messages: Option<Vec<u64>>,
+  // g-set
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub element: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub value: Option<HashSet<u64>>,
 }
