@@ -16,9 +16,22 @@ struct GSet(HashSet<u64>);
 
 impl CRDT for GSet {
   type Element = u64;
+  type Value = HashSet<u64>;
 
   fn init() -> Self {
     GSet(HashSet::new())
+  }
+
+  fn add(&mut self, val: Self::Element) {
+    self.0.insert(val);
+  }
+
+  fn read(&self) -> Self::Value {
+    self.0.clone()
+  }
+
+  fn merge(&mut self, other: &Self) {
+    *self = GSet(self.0.union(&other.0).cloned().collect())
   }
 
   fn from_msg_body(mb: &MsgBody) -> Self {
@@ -30,14 +43,6 @@ impl CRDT for GSet {
       value: Some(self.0.clone()),
       ..Default::default()
     }
-  }
-
-  fn add(&mut self, val: Self::Element) {
-    self.0.insert(val);
-  }
-
-  fn merge(&mut self, other: &Self) {
-    *self = GSet(self.0.union(&other.0).cloned().collect())
   }
 }
 
@@ -124,11 +129,14 @@ fn main() -> Result<()> {
           set_writer.merge(&other);
         }
         "read" => {
-          let mut mb = gset.read().unwrap().into_msg_body();
-          mb.typ = "read_ok".to_owned();
-          mb.msg_id = gen_id();
+          let r = MsgBody {
+            typ: "read_ok".to_owned(),
+            msg_id: gen_id(),
+            value: Some(gset.read().unwrap().read()),
+            ..Default::default()
+          };
 
-          reply(&msg, mb)?;
+          reply(&msg, r)?;
         }
         _ => unimplemented!("unexpected message"),
       }
