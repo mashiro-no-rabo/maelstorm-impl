@@ -65,7 +65,6 @@ fn main() -> Result<()> {
                 dest: nb.clone(),
                 body: MsgBody {
                   typ: "broadcast".to_owned(),
-                  msg_id: gen_id(),
                   message: Some(msg_content),
                   ..Default::default()
                 },
@@ -74,15 +73,15 @@ fn main() -> Result<()> {
             }
           }
 
-          let r = MsgBody {
-            typ: "broadcast_ok".to_owned(),
-            msg_id: gen_id(),
-            ..Default::default()
-          };
-          reply(&msg, r)?;
-        }
-        "broadcast_ok" => {
-          // ignore gossip responses
+          // gossip broadcasts don't have msg_id
+          if msg.body.msg_id.is_some() {
+            let r = MsgBody {
+              typ: "broadcast_ok".to_owned(),
+              msg_id: gen_id(),
+              ..Default::default()
+            };
+            reply(&msg, r)?;
+          }
         }
         "read" => {
           let r = MsgBody {
