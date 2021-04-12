@@ -4,6 +4,6 @@ cargo build --release --bin broadcast
 
 pushd ~/Projects/ReadOnly/maelstrom
 
-lein run test -w broadcast --bin ~/Projects/Rust/maelstrom/target/release/broadcast --time-limit 5 --log-stderr
+lein run test -w broadcast --bin ~/Projects/Rust/maelstrom/target/release/broadcast --time-limit 5 --rate 10 --log-stderr
 
 popd

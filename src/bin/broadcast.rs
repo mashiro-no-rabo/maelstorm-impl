@@ -56,7 +56,23 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "broadcast" => {
-          messages.insert(msg.body.message.unwrap());
+          let msg_content = msg.body.message.unwrap();
+          if messages.insert(msg_content) {
+            // new message, gossip
+            for nb in neighbors.iter() {
+              let gossip = Message {
+                src: node_id.clone(),
+                dest: nb.clone(),
+                body: MsgBody {
+                  typ: "broadcast".to_owned(),
+                  msg_id: gen_id(),
+                  message: Some(msg_content),
+                  ..Default::default()
+                },
+              };
+              println!("{}", serde_json::to_string(&gossip)?);
+            }
+          }
 
           let r = MsgBody {
             typ: "broadcast_ok".to_owned(),
@@ -64,6 +80,9 @@ fn main() -> Result<()> {
             ..Default::default()
           };
           reply(&msg, r)?;
+        }
+        "broadcast_ok" => {
+          // ignore gossip responses
         }
         "read" => {
           let r = MsgBody {
