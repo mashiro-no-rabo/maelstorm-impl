@@ -27,4 +27,6 @@ pub struct MsgBody {
   // broadcast
   #[serde(skip_serializing_if = "Option::is_none")]
   pub topology: Option<HashMap<String, Vec<String>>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub message: Option<u64>,
 }

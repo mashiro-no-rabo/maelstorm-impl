@@ -14,17 +14,20 @@ fn main() -> Result<()> {
   // input
   let stdin = io::stdin();
 
-  // node data
+  // msg_id generation
   let msg_id = AtomicU64::new(0);
+  let gen_id = move || Some(msg_id.fetch_add(1, Ordering::SeqCst));
+
+  // node data
   let mut node_id = String::new();
   let mut neighbors: Vec<String> = vec![];
 
-  // master loop
   loop {
     let mut input = String::new();
     if let Ok(_) = stdin.read_line(&mut input) {
+      log.write_all(format!("Raw message: {}\n", input.trim()).as_bytes())?;
       let msg: Message = serde_json::from_str(&input)?;
-      log.write_all(format!("Got: {:?}\n", &msg).as_bytes())?;
+      log.write_all(format!("Parse result: {:?}\n", &msg).as_bytes())?;
 
       match msg.body.typ.as_str() {
         "init" => {
@@ -36,7 +39,7 @@ fn main() -> Result<()> {
             dest: msg.src,
             body: MsgBody {
               typ: "init_ok".to_owned(),
-              msg_id: Some(msg_id.fetch_add(1, Ordering::SeqCst)),
+              msg_id: gen_id(),
               in_reply_to: Some(msg.body.msg_id.unwrap()),
               ..Default::default()
             },
@@ -54,7 +57,7 @@ fn main() -> Result<()> {
             dest: msg.src,
             body: MsgBody {
               typ: "topology_ok".to_owned(),
-              msg_id: Some(msg_id.fetch_add(1, Ordering::SeqCst)),
+              msg_id: gen_id(),
               in_reply_to: Some(msg.body.msg_id.unwrap()),
               ..Default::default()
             },
