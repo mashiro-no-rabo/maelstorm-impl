@@ -1,13 +1,15 @@
 BIN=$1
 shift 1
 
-set -x
+set -ex
 
 if [[ -z "$FEATURES" ]]; then
   cargo build --release --bin "$BIN"
 else
   cargo build --release --bin "$BIN" --features "$FEATURES"
 fi
+
+set +e
 
 pushd ~/Projects/ReadOnly/maelstrom
 

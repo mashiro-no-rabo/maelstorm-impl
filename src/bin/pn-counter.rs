@@ -12,45 +12,64 @@ use std::{
 
 use maelstrom::*;
 
-struct GCounter(HashMap<String, u64>);
+#[derive(Debug, Clone, Default)]
+struct PNCounter {
+  inc: HashMap<String, u64>,
+  dec: HashMap<String, u64>,
+}
 
-impl CRDT for GCounter {
-  type Element = (String, u64);
-  type Value = u64;
+impl CRDT for PNCounter {
+  type Element = (String, i64);
+  type Value = i64;
 
   fn init() -> Self {
-    GCounter(HashMap::new())
+    Default::default()
   }
 
-  fn add(&mut self, (node, incr): Self::Element) {
-    if let Some(val) = self.0.get_mut(&node) {
-      *val += incr;
+  fn add(&mut self, (node, delta): Self::Element) {
+    let m = if delta.is_positive() {
+      &mut self.inc
     } else {
-      self.0.insert(node, incr);
+      &mut self.dec
+    };
+
+    if let Some(val) = m.get_mut(&node) {
+      *val += delta.abs() as u64;
+    } else {
+      m.insert(node, delta.abs() as u64);
     }
   }
 
   fn read(&self) -> Self::Value {
-    self.0.values().sum()
+    (self.inc.values().sum::<u64>() as i64) - (self.dec.values().sum::<u64>() as i64)
   }
 
   fn merge(&mut self, other: &Self) {
-    for (ok, ov) in other.0.iter() {
-      if let Some(val) = self.0.get_mut(ok) {
+    for (ok, ov) in other.inc.iter() {
+      if let Some(val) = self.inc.get_mut(ok) {
         *val = (*val).max(*ov);
       } else {
-        self.0.insert(ok.clone(), ov.clone());
+        self.inc.insert(ok.clone(), ov.clone());
+      }
+    }
+
+    for (ok, ov) in other.dec.iter() {
+      if let Some(val) = self.dec.get_mut(ok) {
+        *val = (*val).max(*ov);
+      } else {
+        self.dec.insert(ok.clone(), ov.clone());
       }
     }
   }
 
   fn from_msg_body(mb: &MsgBody) -> Self {
-    GCounter(mb.counters.clone().unwrap())
+    let (inc, dec) = mb.pn_counters.clone().unwrap();
+    PNCounter { inc, dec }
   }
 
   fn into_msg_body(&self) -> MsgBody {
     MsgBody {
-      counters: Some(self.0.clone()),
+      pn_counters: Some((self.inc.clone(), self.dec.clone())),
       ..Default::default()
     }
   }
@@ -70,7 +89,7 @@ fn main() -> Result<()> {
 
   // node data
   let mut node_id = String::new();
-  let gset = Arc::new(RwLock::new(GCounter::init()));
+  let crdt = Arc::new(RwLock::new(PNCounter::init()));
 
   loop {
     let mut input = String::new();
@@ -94,12 +113,12 @@ fn main() -> Result<()> {
           log.write_all(format!("Node {} initialized\n", &node_id).as_bytes())?;
 
           // replicate thread
-          let set_reader = gset.clone();
+          let reader = crdt.clone();
           let ni = node_id.clone();
           thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(2_000));
 
-            let mut bd = set_reader.read().unwrap().into_msg_body();
+            let mut bd = reader.read().unwrap().into_msg_body();
             bd.typ = "replicate".to_owned();
 
             for dest in other_nodes.iter().cloned() {
@@ -122,13 +141,9 @@ fn main() -> Result<()> {
         }
         "add" => {
           let delta = msg.body.delta.unwrap();
-          if delta.is_negative() {
-            unimplemented!("g-counter does not support adding negative values");
-          }
-
           {
-            let mut set_writer = gset.write().unwrap();
-            set_writer.add((node_id.clone(), delta as u64));
+            let mut set_writer = crdt.write().unwrap();
+            set_writer.add((node_id.clone(), delta));
           }
 
           let r = MsgBody {
@@ -139,16 +154,16 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "replicate" => {
-          let other = GCounter::from_msg_body(&msg.body);
+          let other = PNCounter::from_msg_body(&msg.body);
 
-          let mut set_writer = gset.write().unwrap();
-          set_writer.merge(&other);
+          let mut writer = crdt.write().unwrap();
+          writer.merge(&other);
         }
         "read" => {
           let r = MsgBody {
             typ: "read_ok".to_owned(),
             msg_id: gen_id(),
-            value: Some(gset.read().unwrap().read() as i64),
+            value: Some(crdt.read().unwrap().read()),
             ..Default::default()
           };
 
