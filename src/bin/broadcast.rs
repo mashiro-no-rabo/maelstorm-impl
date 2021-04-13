@@ -64,7 +64,7 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "broadcast" => {
-          let msg_content = msg.body.message.unwrap();
+          let msg_content = msg.body.message.clone().unwrap().as_u64().unwrap();
           if messages.insert(msg_content) {
             // new message, gossip
             for nb in neighbors.iter().filter(|nb| *nb != &msg.src) {
@@ -81,7 +81,7 @@ fn main() -> Result<()> {
                     body: MsgBody {
                       typ: "broadcast".to_owned(),
                       msg_id,
-                      message: Some(msg_content),
+                      message: Some(serde_json::Value::Number(serde_json::Number::from(msg_content))),
                       ..Default::default()
                     },
                   };
@@ -115,7 +115,12 @@ fn main() -> Result<()> {
           let r = MsgBody {
             typ: "read_ok".to_owned(),
             msg_id: gen_id(),
-            messages: Some(messages.iter().cloned().collect()),
+            messages: Some(
+              messages
+                .iter()
+                .map(|x| serde_json::Value::Number(serde_json::Number::from(*x)))
+                .collect(),
+            ),
             ..Default::default()
           };
           reply(&msg, r)?;

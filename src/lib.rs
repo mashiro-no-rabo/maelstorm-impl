@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -7,6 +8,8 @@ pub struct Message {
   pub dest: String,
   pub body: MsgBody,
 }
+
+type NodeID = String;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MsgBody {
@@ -18,33 +21,29 @@ pub struct MsgBody {
   pub in_reply_to: Option<u64>,
   // init
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub node_id: Option<String>,
+  pub node_id: Option<NodeID>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub node_ids: Option<Vec<String>>,
+  pub node_ids: Option<Vec<NodeID>>,
   // echo workload
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub echo: Option<String>,
+  pub echo: Option<Value>,
   // broadcast
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub topology: Option<HashMap<String, Vec<String>>>,
+  pub topology: Option<HashMap<NodeID, Vec<NodeID>>>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub message: Option<u64>,
+  pub message: Option<Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub messages: Option<Vec<u64>>,
+  pub messages: Option<Vec<Value>>,
   // g-set
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub element: Option<u64>,
-  #[cfg(not(feature = "crdt-counter"))]
+  pub element: Option<Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub value: Option<HashSet<u64>>,
+  pub value: Option<Value>,
   // g-counter
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub delta: Option<i64>,
+  pub delta: Option<Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub counters: Option<HashMap<String, u64>>,
-  #[cfg(feature = "crdt-counter")]
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub value: Option<i64>,
   // pn-counter
   #[serde(skip_serializing_if = "Option::is_none")]
   pub pn_counters: Option<(HashMap<String, u64>, HashMap<String, u64>)>,

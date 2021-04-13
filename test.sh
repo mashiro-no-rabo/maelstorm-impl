@@ -2,13 +2,7 @@ BIN=$1
 shift 1
 
 set -ex
-
-if [[ -z "$FEATURES" ]]; then
-  cargo build --release --bin "$BIN"
-else
-  cargo build --release --bin "$BIN" --features "$FEATURES"
-fi
-
+cargo build --release --bin "$BIN"
 set +e
 
 pushd ~/Projects/ReadOnly/maelstrom
