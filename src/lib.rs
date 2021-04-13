@@ -34,8 +34,17 @@ pub struct MsgBody {
   // g-set
   #[serde(skip_serializing_if = "Option::is_none")]
   pub element: Option<u64>,
+  #[cfg(not(feature = "g-counter"))]
   #[serde(skip_serializing_if = "Option::is_none")]
   pub value: Option<HashSet<u64>>,
+  // g-counter
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub delta: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub counters: Option<HashMap<String, u64>>,
+  #[cfg(feature = "g-counter")]
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub value: Option<u64>,
 }
 
 mod crdt;
