@@ -140,7 +140,7 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "add" => {
-          let delta = msg.body.delta.unwrap();
+          let delta = msg.body.delta.clone().unwrap().as_i64().unwrap();
           {
             let mut set_writer = crdt.write().unwrap();
             set_writer.add((node_id.clone(), delta));
@@ -163,7 +163,7 @@ fn main() -> Result<()> {
           let r = MsgBody {
             typ: "read_ok".to_owned(),
             msg_id: gen_id(),
-            value: Some(crdt.read().unwrap().read()),
+            value: Some(serde_json::Number::from(crdt.read().unwrap().read()).into()),
             ..Default::default()
           };
 

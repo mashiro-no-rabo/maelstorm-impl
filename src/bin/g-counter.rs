@@ -70,7 +70,7 @@ fn main() -> Result<()> {
 
   // node data
   let mut node_id = String::new();
-  let gset = Arc::new(RwLock::new(GCounter::init()));
+  let crdt = Arc::new(RwLock::new(GCounter::init()));
 
   loop {
     let mut input = String::new();
@@ -94,7 +94,7 @@ fn main() -> Result<()> {
           log.write_all(format!("Node {} initialized\n", &node_id).as_bytes())?;
 
           // replicate thread
-          let set_reader = gset.clone();
+          let set_reader = crdt.clone();
           let ni = node_id.clone();
           thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(2_000));
@@ -121,14 +121,10 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "add" => {
-          let delta = msg.body.delta.unwrap();
-          if delta.is_negative() {
-            unimplemented!("g-counter does not support adding negative values");
-          }
-
+          let delta = msg.body.delta.clone().unwrap().as_u64().unwrap();
           {
-            let mut set_writer = gset.write().unwrap();
-            set_writer.add((node_id.clone(), delta as u64));
+            let mut set_writer = crdt.write().unwrap();
+            set_writer.add((node_id.clone(), delta));
           }
 
           let r = MsgBody {
@@ -141,14 +137,14 @@ fn main() -> Result<()> {
         "replicate" => {
           let other = GCounter::from_msg_body(&msg.body);
 
-          let mut set_writer = gset.write().unwrap();
+          let mut set_writer = crdt.write().unwrap();
           set_writer.merge(&other);
         }
         "read" => {
           let r = MsgBody {
             typ: "read_ok".to_owned(),
             msg_id: gen_id(),
-            value: Some(gset.read().unwrap().read() as i64),
+            value: Some(serde_json::Number::from(crdt.read().unwrap().read()).into()),
             ..Default::default()
           };
 

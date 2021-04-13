@@ -35,12 +35,12 @@ impl CRDT for GSet {
   }
 
   fn from_msg_body(mb: &MsgBody) -> Self {
-    GSet(mb.value.clone().unwrap())
+    GSet(mb.set.clone().unwrap())
   }
 
   fn into_msg_body(&self) -> MsgBody {
     MsgBody {
-      value: Some(self.0.clone()),
+      set: Some(self.0.clone()),
       ..Default::default()
     }
   }
@@ -109,7 +109,7 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "add" => {
-          let elem = msg.body.element.unwrap();
+          let elem = msg.body.element.clone().unwrap().as_u64().unwrap();
           {
             let mut set_writer = gset.write().unwrap();
             set_writer.add(elem);
@@ -132,7 +132,7 @@ fn main() -> Result<()> {
           let r = MsgBody {
             typ: "read_ok".to_owned(),
             msg_id: gen_id(),
-            value: Some(gset.read().unwrap().read()),
+            value: Some(gset.read().unwrap().read().clone().into_iter().collect()),
             ..Default::default()
           };
 

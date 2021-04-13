@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -39,6 +39,8 @@ pub struct MsgBody {
   pub element: Option<Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub value: Option<Value>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub set: Option<HashSet<u64>>,
   // g-counter
   #[serde(skip_serializing_if = "Option::is_none")]
   pub delta: Option<Value>,
