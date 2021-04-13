@@ -49,6 +49,11 @@ pub struct MsgBody {
   // pn-counter
   #[serde(skip_serializing_if = "Option::is_none")]
   pub pn_counters: Option<(HashMap<String, u64>, HashMap<String, u64>)>,
+  // txn-list-append
+  // a transaction is a list of µ-op
+  // each µ-op is [function, key, value]
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub txn: Option<Vec<Vec<Value>>>,
 }
 
 mod crdt;
