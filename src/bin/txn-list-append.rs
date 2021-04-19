@@ -1,10 +1,11 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde_json::{Number as Jnum, Value as Jval};
 use std::{
-  collections::HashMap,
-  io::{self, Write},
+  io::{self, BufRead, BufReader, Stdin, Write},
   sync::atomic::{AtomicU64, Ordering},
+  time::Duration,
 };
+use timeout_readwrite::TimeoutReader;
 
 use maelstrom::*;
 
@@ -36,70 +37,6 @@ impl Op {
   }
 }
 
-type Key = u64;
-type Val = Vec<u64>;
-#[derive(Debug, Clone, Default)]
-struct Database(HashMap<Key, Val>);
-
-impl Database {
-  fn commit(&mut self, txn: &[Op]) -> Result<Vec<Vec<Jval>>> {
-    let mut ret = Vec::new();
-    for op in txn.iter().cloned() {
-      match op {
-        Op::Append(k, v) => {
-          if let Some(list) = self.0.get_mut(&k) {
-            list.push(v);
-          } else {
-            self.0.insert(k, vec![v]);
-          }
-
-          ret.push(vec![
-            Jval::String("append".to_owned()),
-            Jval::Number(Jnum::from(k)),
-            Jval::Number(Jnum::from(v)),
-          ]);
-        }
-        Op::Verify(k, expected) => {
-          if let Some(list) = self.0.get(&k) {
-            if list == &expected {
-              ret.push(vec![
-                Jval::String("r".to_owned()),
-                Jval::Number(Jnum::from(k)),
-                Jval::Array(
-                  expected
-                    .clone()
-                    .into_iter()
-                    .map(|v| Jval::Number(Jnum::from(v)))
-                    .collect(),
-                ),
-              ]);
-            } else {
-              bail!("failed to verify");
-            }
-          } else {
-            bail!("failed to verify");
-          }
-        }
-        Op::Read(k) => {
-          ret.push(vec![
-            Jval::String("r".to_owned()),
-            Jval::Number(Jnum::from(k)),
-            self.0.get(&k).cloned().map_or(Jval::Null, |vals| {
-              vals
-                .into_iter()
-                .map(|v| Jval::Number(Jnum::from(v)))
-                .collect::<Vec<Jval>>()
-                .into()
-            }),
-          ]);
-        }
-      }
-    }
-
-    Ok(ret)
-  }
-}
-
 fn main() -> Result<()> {
   // logging
   let stderr = io::stderr();
@@ -107,13 +44,14 @@ fn main() -> Result<()> {
 
   // input
   let stdin = io::stdin();
+  let mut stdin = BufReader::new(TimeoutReader::new(stdin, Duration::from_millis(500)));
 
   // msg_id generation
   let msg_id = AtomicU64::new(0);
   let gen_id = move || Some(msg_id.fetch_add(1, Ordering::SeqCst));
 
   // node data
-  let mut db = Database::default();
+  let mut node_id = String::new();
 
   loop {
     let mut input = String::new();
@@ -124,7 +62,7 @@ fn main() -> Result<()> {
 
       match msg.body.typ.as_str() {
         "init" => {
-          let node_id = msg.body.node_id.clone().unwrap();
+          node_id = msg.body.node_id.clone().unwrap();
           let _other_nodes: Vec<String> = msg
             .body
             .node_ids
@@ -144,8 +82,84 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "txn" => {
-          let t: Vec<Op> = msg.body.txn.clone().unwrap().iter().map(|x| Op::from_txn(x)).collect();
-          let ret = db.commit(&t)?;
+          let ret: Vec<Vec<Jval>> = msg
+            .body
+            .txn
+            .clone()
+            .unwrap()
+            .iter()
+            .map(|x| match Op::from_txn(x) {
+              Op::Append(k, v) => {
+                let from = rpc(
+                  &mut stdin,
+                  Message {
+                    src: node_id.clone(),
+                    dest: "lin-kv".to_owned(),
+                    body: MsgBody {
+                      typ: "read".to_owned(),
+                      key: Some(k),
+                      ..Default::default()
+                    },
+                  },
+                )
+                .unwrap()
+                .body
+                .value
+                .map(|v| v.as_array().cloned().unwrap());
+
+                let mut to = from.clone().unwrap_or(Vec::new());
+                to.push(Jval::Number(Jnum::from(v)));
+
+                rpc(
+                  &mut stdin,
+                  Message {
+                    src: node_id.clone(),
+                    dest: "lin-kv".to_owned(),
+                    body: MsgBody {
+                      typ: "cas".to_owned(),
+                      key: Some(k),
+                      from,
+                      to: Some(to),
+                      create_if_not_exists: Some(true),
+                      ..Default::default()
+                    },
+                  },
+                )
+                .unwrap();
+
+                vec![
+                  Jval::String("append".to_owned()),
+                  Jval::Number(Jnum::from(k)),
+                  Jval::Number(Jnum::from(v)),
+                ]
+              }
+              Op::Read(k) => {
+                let lin_kv_val = rpc(
+                  &mut stdin,
+                  Message {
+                    src: node_id.clone(),
+                    dest: "lin-kv".to_owned(),
+                    body: MsgBody {
+                      typ: "read".to_owned(),
+                      key: Some(k),
+                      ..Default::default()
+                    },
+                  },
+                )
+                .unwrap()
+                .body
+                .value
+                .map(|v| v.as_array().cloned().unwrap());
+
+                vec![
+                  Jval::String("r".to_owned()),
+                  Jval::Number(Jnum::from(k)),
+                  lin_kv_val.map_or(Jval::Null, |v| v.into()),
+                ]
+              }
+              _ => unimplemented!(),
+            })
+            .collect();
 
           let r = MsgBody {
             typ: "txn_ok".to_owned(),
@@ -173,4 +187,14 @@ fn reply(origin: &Message, mut resp_body: MsgBody) -> Result<()> {
   println!("{}", serde_json::to_string(&reply)?);
 
   Ok(())
+}
+
+fn rpc(stdin: &mut BufReader<TimeoutReader<Stdin>>, req: Message) -> Result<Message> {
+  println!("{}", serde_json::to_string(&req)?);
+
+  let mut input = String::new();
+  let _ = stdin.read_line(&mut input)?;
+
+  let msg: Message = serde_json::from_str(&input)?;
+  Ok(msg)
 }

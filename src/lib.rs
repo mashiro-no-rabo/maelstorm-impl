@@ -54,6 +54,18 @@ pub struct MsgBody {
   // each µ-op is [function, key, value]
   #[serde(skip_serializing_if = "Option::is_none")]
   pub txn: Option<Vec<Vec<Value>>>,
+  // lin-kv
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub key: Option<u64>,
+  // conflict with g-set
+  // #[serde(skip_serializing_if = "Option::is_none")]
+  // pub value: Option<Vec<u64>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub from: Option<Vec<Value>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub to: Option<Vec<Value>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub create_if_not_exists: Option<bool>,
 }
 
 mod crdt;
