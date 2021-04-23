@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Number as Jnum, Value as Jval};
 use std::{
-  collections::BTreeMap,
+  collections::HashMap,
   io::{self, BufRead, BufReader, Stdin, Write},
   sync::atomic::{AtomicU64, Ordering},
   time::Duration,
@@ -42,7 +42,7 @@ impl Op {
 type Key = u64;
 type Val = Vec<u64>;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct Database(BTreeMap<Key, Val>);
+struct Database(HashMap<Key, Val>);
 
 const DB_KEY: &str = "db";
 
@@ -78,6 +78,20 @@ impl Database {
             }),
           ]
         }
+      })
+      .collect()
+  }
+}
+
+impl From<Database> for Jval {
+  fn from(db: Database) -> Self {
+    db.0
+      .into_iter()
+      .map(|(k, v)| {
+        (
+          k.to_string(),
+          v.into_iter().map(|x| Jval::Number(Jnum::from(x))).collect::<Jval>(),
+        )
       })
       .collect()
   }
@@ -136,7 +150,23 @@ fn main() -> Result<()> {
           .body
           .value
           .map_or(Default::default(), |x| {
-            serde_json::from_str(x.as_str().unwrap()).unwrap()
+            let db = x
+              .as_object()
+              .unwrap()
+              .iter()
+              .map(|(k, v)| {
+                (
+                  k.parse::<u64>().unwrap(),
+                  v.as_array()
+                    .cloned()
+                    .unwrap()
+                    .into_iter()
+                    .map(|x| x.as_u64().unwrap())
+                    .collect::<Vec<u64>>(),
+                )
+              })
+              .collect();
+            Database(db)
           });
 
           let mut db2 = db1.clone();
@@ -152,8 +182,8 @@ fn main() -> Result<()> {
               body: MsgBody {
                 typ: "cas".to_owned(),
                 key: Some(DB_KEY.into()),
-                from: Some(serde_json::to_string(&db1).unwrap().into()),
-                to: Some(serde_json::to_string(&db2).unwrap().into()),
+                from: Some(db1.into()),
+                to: Some(db2.into()),
                 create_if_not_exists: Some(true),
                 ..Default::default()
               },
