@@ -19,6 +19,11 @@ pub struct MsgBody {
   pub msg_id: Option<u64>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub in_reply_to: Option<u64>,
+  // error
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub code: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub text: Option<String>,
   // init
   #[serde(skip_serializing_if = "Option::is_none")]
   pub node_id: Option<NodeID>,
@@ -56,14 +61,11 @@ pub struct MsgBody {
   pub txn: Option<Vec<Vec<Value>>>,
   // lin-kv
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub key: Option<u64>,
-  // conflict with g-set
-  // #[serde(skip_serializing_if = "Option::is_none")]
-  // pub value: Option<Vec<u64>>,
+  pub key: Option<Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub from: Option<Vec<Value>>,
+  pub from: Option<Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub to: Option<Vec<Value>>,
+  pub to: Option<Value>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub create_if_not_exists: Option<bool>,
 }

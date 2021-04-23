@@ -1,6 +1,8 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use serde_json::{Number as Jnum, Value as Jval};
 use std::{
+  collections::BTreeMap,
   io::{self, BufRead, BufReader, Stdin, Write},
   sync::atomic::{AtomicU64, Ordering},
   time::Duration,
@@ -12,7 +14,7 @@ use maelstrom::*;
 #[derive(Debug, Clone)]
 enum Op {
   Append(u64, u64),
-  Verify(u64, Vec<u64>),
+  // Verify(u64, Vec<u64>),
   Read(u64),
 }
 
@@ -28,12 +30,56 @@ impl Op {
         let k = iter.next().unwrap().as_u64().unwrap();
         match iter.next().unwrap() {
           Jval::Null => Self::Read(k),
-          Jval::Array(expected) => Self::Verify(k, expected.iter().cloned().map(|v| v.as_u64().unwrap()).collect()),
+          // Jval::Array(expected) => Self::Verify(k, expected.iter().cloned().map(|v| v.as_u64().unwrap()).collect()),
           _ => unimplemented!("unexpected read function value"),
         }
       }
       _ => unimplemented!("unexpected transaction µ-op function"),
     }
+  }
+}
+
+type Key = u64;
+type Val = Vec<u64>;
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Database(BTreeMap<Key, Val>);
+
+const DB_KEY: &str = "db";
+
+impl Database {
+  fn commit(&mut self, txn: &[Op]) -> Vec<Vec<Jval>> {
+    txn
+      .iter()
+      .cloned()
+      .map(|op| match op {
+        Op::Append(k, v) => {
+          if let Some(list) = self.0.get_mut(&k) {
+            list.push(v);
+          } else {
+            self.0.insert(k, vec![v]);
+          }
+
+          vec![
+            Jval::String("append".to_owned()),
+            Jval::Number(Jnum::from(k)),
+            Jval::Number(Jnum::from(v)),
+          ]
+        }
+        Op::Read(k) => {
+          vec![
+            Jval::String("r".to_owned()),
+            Jval::Number(Jnum::from(k)),
+            self.0.get(&k).cloned().map_or(Jval::Null, |vals| {
+              vals
+                .into_iter()
+                .map(|v| Jval::Number(Jnum::from(v)))
+                .collect::<Vec<Jval>>()
+                .into()
+            }),
+          ]
+        }
+      })
+      .collect()
   }
 }
 
@@ -63,14 +109,6 @@ fn main() -> Result<()> {
       match msg.body.typ.as_str() {
         "init" => {
           node_id = msg.body.node_id.clone().unwrap();
-          let _other_nodes: Vec<String> = msg
-            .body
-            .node_ids
-            .clone()
-            .unwrap()
-            .into_iter()
-            .filter(|n| n != &node_id)
-            .collect();
 
           log.write_all(format!("Node {} initialized\n", &node_id).as_bytes())?;
 
@@ -82,92 +120,64 @@ fn main() -> Result<()> {
           reply(&msg, r)?;
         }
         "txn" => {
-          let ret: Vec<Vec<Jval>> = msg
-            .body
-            .txn
-            .clone()
-            .unwrap()
-            .iter()
-            .map(|x| match Op::from_txn(x) {
-              Op::Append(k, v) => {
-                let from = rpc(
-                  &mut stdin,
-                  Message {
-                    src: node_id.clone(),
-                    dest: "lin-kv".to_owned(),
-                    body: MsgBody {
-                      typ: "read".to_owned(),
-                      key: Some(k),
-                      ..Default::default()
-                    },
-                  },
-                )
-                .unwrap()
-                .body
-                .value
-                .map(|v| v.as_array().cloned().unwrap());
+          let db1: Database = rpc(
+            &mut stdin,
+            Message {
+              src: node_id.clone(),
+              dest: "lin-kv".to_owned(),
+              body: MsgBody {
+                typ: "read".to_owned(),
+                key: Some(DB_KEY.into()),
+                ..Default::default()
+              },
+            },
+          )
+          .unwrap()
+          .body
+          .value
+          .map_or(Default::default(), |x| {
+            serde_json::from_str(x.as_str().unwrap()).unwrap()
+          });
 
-                let mut to = from.clone().unwrap_or(Vec::new());
-                to.push(Jval::Number(Jnum::from(v)));
+          let mut db2 = db1.clone();
 
-                rpc(
-                  &mut stdin,
-                  Message {
-                    src: node_id.clone(),
-                    dest: "lin-kv".to_owned(),
-                    body: MsgBody {
-                      typ: "cas".to_owned(),
-                      key: Some(k),
-                      from,
-                      to: Some(to),
-                      create_if_not_exists: Some(true),
-                      ..Default::default()
-                    },
-                  },
-                )
-                .unwrap();
+          let t: Vec<Op> = msg.body.txn.clone().unwrap().iter().map(|x| Op::from_txn(x)).collect();
+          let ret = db2.commit(&t);
 
-                vec![
-                  Jval::String("append".to_owned()),
-                  Jval::Number(Jnum::from(k)),
-                  Jval::Number(Jnum::from(v)),
-                ]
-              }
-              Op::Read(k) => {
-                let lin_kv_val = rpc(
-                  &mut stdin,
-                  Message {
-                    src: node_id.clone(),
-                    dest: "lin-kv".to_owned(),
-                    body: MsgBody {
-                      typ: "read".to_owned(),
-                      key: Some(k),
-                      ..Default::default()
-                    },
-                  },
-                )
-                .unwrap()
-                .body
-                .value
-                .map(|v| v.as_array().cloned().unwrap());
+          let cas_resp = rpc(
+            &mut stdin,
+            Message {
+              src: node_id.clone(),
+              dest: "lin-kv".to_owned(),
+              body: MsgBody {
+                typ: "cas".to_owned(),
+                key: Some(DB_KEY.into()),
+                from: Some(serde_json::to_string(&db1).unwrap().into()),
+                to: Some(serde_json::to_string(&db2).unwrap().into()),
+                create_if_not_exists: Some(true),
+                ..Default::default()
+              },
+            },
+          );
 
-                vec![
-                  Jval::String("r".to_owned()),
-                  Jval::Number(Jnum::from(k)),
-                  lin_kv_val.map_or(Jval::Null, |v| v.into()),
-                ]
-              }
-              _ => unimplemented!(),
-            })
-            .collect();
-
-          let r = MsgBody {
-            typ: "txn_ok".to_owned(),
-            msg_id: gen_id(),
-            txn: Some(ret),
-            ..Default::default()
-          };
-          reply(&msg, r)?;
+          if cas_resp.map_or(false, |cr| cr.body.typ == "cas_ok") {
+            let r = MsgBody {
+              typ: "txn_ok".to_owned(),
+              msg_id: gen_id(),
+              txn: Some(ret),
+              ..Default::default()
+            };
+            reply(&msg, r)?;
+          } else {
+            let r = MsgBody {
+              typ: "error".to_owned(),
+              msg_id: gen_id(),
+              code: Some(30),
+              text: Some("CAS failed".to_owned()),
+              ..Default::default()
+            };
+            reply(&msg, r)?;
+          }
         }
         _ => unimplemented!("unexpected message"),
       }
